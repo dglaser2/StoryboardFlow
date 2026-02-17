@@ -28,6 +28,7 @@
         button.secondary { background: rgba(255,255,255,0.1); color: white; }
         video { background: #000; }
         .placeholder { opacity: 0.8; font-size: 0.85rem; }
+        .caption-line { font-size: 0.85rem; opacity: 0.8; margin: 0.35rem 0; min-height: 2.4em; overflow: hidden; text-overflow: ellipsis; }
     </style>
 </head>
 <body>
@@ -62,8 +63,9 @@
                 {% else %}
                     <img class="media" src="/{{ chosen_path }}" alt="Frame {{ frame.index + 1 }}" />
                 {% endif %}
-                <h3 id="frame-{{ frame.index + 1 }}">{{ frame.caption }}</h3>
-                <p class="placeholder">Chosen: {{ frame.chosen }} · Prompt: {{ frame['prompt_' ~ frame.chosen] }}</p>
+                <h3 id="frame-{{ frame.index + 1 }}">Frame {{ frame.index + 1 }}</h3>
+                <p class="caption-line">{{ frame.caption }}</p>
+                <p class="placeholder">Choice: {{ frame.chosen }}</p>
                 <div class="hidden" data-frame="{{ frame | tojson }}"></div>
             </article>
             {% endfor %}
@@ -134,11 +136,13 @@
         function showAlternatives(idx) {
             const frame = frames[idx];
             if (!frame) return;
+            const captionAltA = frame.caption_altA || `${frame.caption} — dramatic lighting emphasis`;
+            const captionAltB = frame.caption_altB || `${frame.caption} — tighter narrative camera`;
             panel.innerHTML = `
                 <div class="alt-card">
                     <h4>Base · prompt</h4>
-                    ${mediaElement(frame.base_clip_path, frame.upload_path)}
-                    <p>${frame.prompt_base}</p>
+                    ${mediaElement(frame.base_clip_path, frame.still_base_path)}
+                    <p>${frame.caption}</p>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="base" />
@@ -147,8 +151,8 @@
                 </div>
                 <div class="alt-card">
                     <h4>Alt A · lighting shift</h4>
-                    ${mediaElement(frame.altA_clip_path, frame.upload_path)}
-                    <p>${frame.prompt_altA}</p>
+                    ${mediaElement(frame.altA_clip_path, frame.still_altA_path)}
+                    <p>${captionAltA}</p>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="altA" />
@@ -157,8 +161,8 @@
                 </div>
                 <div class="alt-card">
                     <h4>Alt B · camera shift</h4>
-                    ${mediaElement(frame.altB_clip_path, frame.upload_path)}
-                    <p>${frame.prompt_altB}</p>
+                    ${mediaElement(frame.altB_clip_path, frame.still_altB_path)}
+                    <p>${captionAltB}</p>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="altB" />

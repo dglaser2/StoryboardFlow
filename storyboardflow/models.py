@@ -11,7 +11,13 @@ from pydantic import BaseModel, Field
 class Frame(BaseModel):
     index: int
     upload_path: str
+    enhanced_path: str = ""
+    still_base_path: str = ""
+    still_altA_path: str = ""
+    still_altB_path: str = ""
     caption: str
+    caption_altA: str = ""
+    caption_altB: str = ""
     prompt_base: str
     prompt_altA: str
     prompt_altB: str
