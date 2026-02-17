@@ -1,27 +1,32 @@
-# storyboardflow
+# StoryboardFlow — Rough Board ➜ Preview Clips
 
-StoryboardFlow is a minimal “variation mode” engine that turns a single scene description into a structured interpretation, four creative image tiles, and a downloadable contact-sheet PDF. Everything runs locally with deterministic fallbacks so you can explore creative branches without API keys.
+StoryboardFlow turns an uploaded rough storyboard (4–8 frames) into captioned review clips with branching alternatives. Each frame gets a base treatment plus two variations (lighting + camera). Choosing an alternative propagates constraints downstream with a lookahead regeneration window of 2 frames so decisions feel immediate, while later frames lazily refresh when you inspect them.
 
 ## 30-second local run
-1. Install deps (Python 3.11+):
-   ```bash
-   cd storyboardflow
-   python -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
-   uvicorn storyboardflow.app:app --reload
-   ```
-2. Visit http://127.0.0.1:8000, paste a scene, and submit.
-
-## Example scene to paste
-> A drenched detective waits beneath a flickering streetlamp as distant sirens cut through the midnight rain.
-
-## What variation mode demonstrates
-Variation mode keeps core story beats locked while intentionally perturbing lighting, camera, and emotional tone. The faithfulness tile grounds the scene, and the remaining three tiles show controlled creative iteration for lighting, camera, and emotion choices. The PDF contact sheet captures all four frames with captions for quick reviews.
-
-## Optional: enable OpenAI
-Set `OPENAI_API_KEY` in your shell before launching Uvicorn to let the pipeline call OpenAI for scene parsing and prompt drafting:
 ```bash
-export OPENAI_API_KEY=sk-...
+cd storyboardflow
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 uvicorn storyboardflow.app:app --reload
 ```
-Without the key, the heuristics infer scene fields, create prompts, render Pillow placeholders, and generate the PDF.
+Visit http://127.0.0.1:8000, upload 4–8 JPG/PNG frames, and start branching.
+
+## What variation mode demonstrates
+- **Captions**: each uploaded frame gets a 1-line caption (OpenAI vision if `OPENAI_API_KEY` is set, deterministic fallback otherwise).
+- **Preview clips**: ffmpeg applies a Ken Burns zoompan and text overlay for Base, Alt A (lighting shift), and Alt B (camera shift). If ffmpeg is missing, we fall back to still images.
+- **Branching with lookahead regen (W=2)**: selecting an alternative updates global constraints, re-renders the next two frames immediately, and marks later frames stale until you interact with them (lazy regen via `POST /regen`).
+- **Contact sheet export**: render the chosen variants into a PDF via ReportLab.
+
+## Example workflow
+1. Upload your rough storyboard images and submit.
+2. Review the grid — hover to play clips. Stale badges indicate frames waiting for regeneration.
+3. Click a tile to open Alternatives. Choose Base, Alt A (lighting), or Alt B (camera). The system bumps the constraint version, re-renders the next two frames, and queues later frames for on-demand regen.
+4. If you hit a stale frame later, clicking it triggers quick regeneration before showing options.
+5. Export a contact sheet PDF when ready via the Review page.
+
+## Optional: enable OpenAI + ffmpeg
+- **OpenAI (for captions)**
+  ```bash
+  export OPENAI_API_KEY=sk-...
+  ```
+- **ffmpeg (for animated previews)** – install via Homebrew (`brew install ffmpeg`) or your package manager. Without it, StoryboardFlow automatically falls back to still images and disables hover playback.

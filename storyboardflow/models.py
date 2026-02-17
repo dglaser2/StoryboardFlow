@@ -1,23 +1,56 @@
-"""Pydantic models for storyboardflow pipeline."""
+"""Data models for storyboard branching workflow."""
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
-from typing import List
 
 
-class Scene(BaseModel):
-    title: str
-    characters: List[str]
-    location: str
-    time_of_day: str
-    mood: str
-    lighting: str
-    camera: str
-    style: str
-    constraints: List[str] = Field(default_factory=list)
+class Frame(BaseModel):
+    index: int
+    upload_path: str
+    caption: str
+    prompt_base: str
+    prompt_altA: str
+    prompt_altB: str
+    base_clip_path: str
+    altA_clip_path: str
+    altB_clip_path: str
+    chosen: str = "base"
+    constraints_version: int = 0
+    is_stale: bool = False
 
 
-class Variation(BaseModel):
-    name: str
-    prompt: str
-    image_path: str
+class JobState(BaseModel):
+    job_id: str
+    num_frames: int
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    constraints_version: int = 0
+    global_constraints: str = ""
+    frames: List[Frame]
+    branch_events: List[dict] = Field(default_factory=list)
+
+    def compute_staleness(self) -> None:
+        for frame in self.frames:
+            frame.is_stale = frame.constraints_version < self.constraints_version
+
+    def frame_by_index(self, idx: int) -> Frame:
+        return self.frames[idx]
+
+
+def load_state(path: Path) -> Optional[JobState]:
+    if not path.exists():
+        return None
+    text = path.read_text()
+    if not text:
+        return None
+    state = JobState.model_validate_json(text)
+    state.compute_staleness()
+    return state
+
+
+def save_state(state: JobState, path: Path) -> None:
+    state.compute_staleness()
+    path.write_text(state.model_dump_json(indent=2))

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>StoryboardFlow — Review</title>
+    <style>
+        :root { font-family: 'Inter', system-ui, sans-serif; color: #f5f6fa; }
+        body { margin: 0; background: #03040a; color: #f5f6fa; }
+        header { padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; padding: 2rem; }
+        .frame-card { background: rgba(10, 13, 22, 0.95); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 1rem; position: relative; cursor: pointer; }
+        .frame-card.stale { box-shadow: 0 0 0 2px #ff9c5c inset; }
+        .frame-card h3 { margin: 0 0 0.4rem 0; font-size: 0.95rem; letter-spacing: 0.1em; }
+        .media { width: 100%; border-radius: 12px; background: #0f111b; border: 1px solid rgba(255,255,255,0.05); }
+        .badge { position: absolute; top: 12px; left: 12px; font-size: 0.7rem; padding: 0.25rem 0.5rem; border-radius: 999px; background: rgba(255,255,255,0.15); }
+        .badge.stale { background: rgba(255, 154, 92, 0.9); color: #140800; }
+        .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 0; }
+        .side-panel { border-left: 1px solid rgba(255,255,255,0.08); padding: 2rem; min-height: 100vh; background: rgba(6,8,16,0.95); }
+        .alt-card { background: rgba(13, 16, 28, 0.65); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 1rem; margin-bottom: 1rem; }
+        .alt-card h4 { margin-top: 0; }
+        .alt-card button { margin-top: 0.5rem; width: 100%; padding: 0.6rem; border-radius: 12px; border: none; cursor: pointer; }
+        .alt-card video, .alt-card img { width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); }
+        .constraints { font-size: 0.9rem; opacity: 0.8; margin-top: 0.5rem; }
+        .actions form { display: inline-block; margin-right: 0.5rem; }
+        .events { margin-top: 2rem; font-size: 0.85rem; opacity: 0.8; line-height: 1.4; }
+        .panel-title { font-size: 0.85rem; letter-spacing: 0.2em; color: #7fd1ff; margin-bottom: 0.5rem; }
+        button.primary { background: linear-gradient(135deg, #6f7eff, #29abe2); color: white; }
+        button.secondary { background: rgba(255,255,255,0.1); color: white; }
+        video { background: #000; }
+        .placeholder { opacity: 0.8; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <strong>StoryboardFlow — Review</strong>
+            <div class="constraints">{{ state.global_constraints or "Constraints: none" }} · Version {{ state.constraints_version }}</div>
+        </div>
+        <div class="actions">
+            <form method="post" action="/export/{{ job_id }}">
+                <button class="secondary" type="submit">Export contact sheet PDF</button>
+            </form>
+            {% if pdf_path %}
+            <a href="/{{ pdf_path }}" class="secondary" style="padding:0.6rem 1rem; border-radius:12px; border:1px solid rgba(255,255,255,0.2); text-decoration:none; color:#fff;">Latest PDF</a>
+            {% endif %}
+        </div>
+    </header>
+    <div class="layout">
+        <section class="grid">
+            {% for frame in frames %}
+            {% set chosen_path = frame.base_clip_path %}
+            {% if frame.chosen == 'altA' %}
+                {% set chosen_path = frame.altA_clip_path %}
+            {% elif frame.chosen == 'altB' %}
+                {% set chosen_path = frame.altB_clip_path %}
+            {% endif %}
+            {% set is_video = chosen_path.endswith('.mp4') %}
+            <article class="frame-card {% if frame.is_stale %}stale{% endif %}" data-index="{{ frame.index }}" data-stale="{{ 'true' if frame.is_stale else 'false' }}">
+                <span class="badge {% if frame.is_stale %}stale{% endif %}">Frame {{ frame.index + 1 }}</span>
+                {% if is_video %}
+                    <video class="media" src="/{{ chosen_path }}" muted loop preload="metadata" poster="/{{ frame.upload_path }}"></video>
+                {% else %}
+                    <img class="media" src="/{{ chosen_path }}" alt="Frame {{ frame.index + 1 }}" />
+                {% endif %}
+                <h3 id="frame-{{ frame.index + 1 }}">{{ frame.caption }}</h3>
+                <p class="placeholder">Chosen: {{ frame.chosen }} · Prompt: {{ frame['prompt_' ~ frame.chosen] }}</p>
+                <div class="hidden" data-frame="{{ frame | tojson }}"></div>
+            </article>
+            {% endfor %}
+        </section>
+        <aside class="side-panel">
+            <div class="panel-title" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>ALTERNATIVES</span>
+                <button id="close-alt" class="secondary" style="padding:0.25rem 0.6rem; border-radius:999px; font-size:0.75rem; border:1px solid rgba(255,255,255,0.3); cursor:pointer;">×</button>
+            </div>
+            <div id="alt-panel">
+                <p class="placeholder">Select a frame to inspect Base / Lighting / Camera variations. Stale frames regenerate automatically before showing.</p>
+            </div>
+            <div class="panel-title" style="margin-top:2rem;">BRANCH EVENTS</div>
+            <div class="events">
+                {% if state.branch_events %}
+                    {% for event in state.branch_events|reverse %}
+                        <div>#{{ event.frame_index + 1 }} → {{ event.chosen }} · v{{ event.constraints_version }}<br/>{{ event.global_constraints }}</div>
+                    {% endfor %}
+                {% else %}
+                    <p class="placeholder">No branch selections yet.</p>
+                {% endif %}
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const frames = {{ frames | tojson }};
+        const jobId = '{{ job_id }}';
+        const panel = document.getElementById('alt-panel');
+        const closeAlt = document.getElementById('close-alt');
+
+        function resetPanel() {
+            panel.innerHTML = `<p class="placeholder">Select a frame to inspect Base / Lighting / Camera variations. Stale frames regenerate automatically before showing.</p>`;
+        }
+
+        closeAlt.addEventListener('click', () => {
+            resetPanel();
+        });
+
+        document.querySelectorAll('.frame-card').forEach(card => {
+            const video = card.querySelector('video');
+            if (video) {
+                card.addEventListener('mouseenter', () => { video.play(); });
+                card.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
+            }
+
+            card.addEventListener('click', async () => {
+                const idx = Number(card.dataset.index);
+                if (card.dataset.stale === 'true') {
+                    card.style.opacity = 0.5;
+                    const fd = new FormData();
+                    fd.append('frame_index', idx);
+                    await fetch(`/regen/${jobId}`, { method: 'POST', body: fd, headers: { 'accept': 'application/json' } });
+                    window.location.reload();
+                    return;
+                }
+                showAlternatives(idx);
+            });
+        });
+
+        function mediaElement(path, poster) {
+            if (path.endsWith('.mp4')) {
+                return `<video src="/${path}" muted loop preload="metadata" poster="/${poster}"></video>`;
+            }
+            return `<img src="/${path}" />`;
+        }
+
+        function showAlternatives(idx) {
+            const frame = frames[idx];
+            if (!frame) return;
+            panel.innerHTML = `
+                <div class="alt-card">
+                    <h4>Base · prompt</h4>
+                    ${mediaElement(frame.base_clip_path, frame.upload_path)}
+                    <p>${frame.prompt_base}</p>
+                    <form method="post" action="/choose/${jobId}">
+                        <input type="hidden" name="frame_index" value="${idx}" />
+                        <input type="hidden" name="choice" value="base" />
+                        <button class="secondary" type="submit">Choose Base</button>
+                    </form>
+                </div>
+                <div class="alt-card">
+                    <h4>Alt A · lighting shift</h4>
+                    ${mediaElement(frame.altA_clip_path, frame.upload_path)}
+                    <p>${frame.prompt_altA}</p>
+                    <form method="post" action="/choose/${jobId}">
+                        <input type="hidden" name="frame_index" value="${idx}" />
+                        <input type="hidden" name="choice" value="altA" />
+                        <button class="primary" type="submit">Choose Lighting Alt</button>
+                    </form>
+                </div>
+                <div class="alt-card">
+                    <h4>Alt B · camera shift</h4>
+                    ${mediaElement(frame.altB_clip_path, frame.upload_path)}
+                    <p>${frame.prompt_altB}</p>
+                    <form method="post" action="/choose/${jobId}">
+                        <input type="hidden" name="frame_index" value="${idx}" />
+                        <input type="hidden" name="choice" value="altB" />
+                        <button class="primary" type="submit">Choose Camera Alt</button>
+                    </form>
+                </div>
+            `;
+            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            attachAltMedia();
+        }
+
+        resetPanel();
+
+        function attachAltMedia() {
+            panel.querySelectorAll('video').forEach(video => {
+                video.addEventListener('mouseenter', () => video.play());
+                video.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
+            });
+        }
+    </script>
+</body>
+</html>

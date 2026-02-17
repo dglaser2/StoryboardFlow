@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>StoryboardFlow · Variation Mode</title>
+    <title>StoryboardFlow — Upload rough board</title>
     <style>
         :root {
             font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-            background-color: #07090f;
-            color: #f4f4f4;
+            background: radial-gradient(circle at top, #1b2338, #05060a 60%);
+            color: #f5f6fa;
         }
         body {
             margin: 0;
@@ -15,60 +15,59 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 2rem;
+            padding: 3rem;
         }
         .panel {
-            background: rgba(11, 15, 25, 0.9);
+            background: rgba(5, 8, 15, 0.9);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
-            padding: 2rem;
+            border-radius: 24px;
+            padding: 2.5rem;
             max-width: 720px;
             width: 100%;
-            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+            box-shadow: 0 30px 60px rgba(2, 4, 8, 0.5);
         }
         h1 {
             margin-top: 0;
-            letter-spacing: 0.05em;
-            font-weight: 600;
+            letter-spacing: 0.08em;
+            font-size: 1.6rem;
         }
-        textarea {
+        input[type="file"] {
             width: 100%;
-            min-height: 200px;
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.1);
-            background: #0d111c;
-            color: #fff;
+            margin-top: 1rem;
             padding: 1rem;
-            font-size: 1rem;
+            border-radius: 16px;
+            border: 1px dashed rgba(255,255,255,0.2);
+            background: rgba(12, 14, 24, 0.8);
+            color: #ccc;
         }
         button {
             margin-top: 1.5rem;
-            background: linear-gradient(135deg, #4b9cff, #9147ff);
+            background: linear-gradient(120deg, #7f5dff, #29abe2);
             border: none;
-            color: white;
-            padding: 0.9rem 1.5rem;
             border-radius: 999px;
+            padding: 0.95rem 2rem;
             font-size: 1rem;
+            color: #fff;
             cursor: pointer;
         }
         button:hover {
-            opacity: 0.85;
+            opacity: 0.9;
         }
-        .hint {
-            opacity: 0.8;
-            font-size: 0.9rem;
-            margin-top: 0.5rem;
-        }
+        ul { line-height: 1.6; opacity: 0.85; }
     </style>
 </head>
 <body>
     <section class="panel">
-        <h1>StoryboardFlow Variation Mode</h1>
-        <p>Paste a single-scene description and generate a structured interpretation, four creative image tiles, and a PDF contact sheet — all without API keys.</p>
-        <form method="post" action="/generate">
-            <textarea name="scene_text" placeholder="Example: A drenched detective waits beneath a flickering streetlamp as distant sirens cut through the midnight rain."></textarea>
-            <div class="hint">The engine infers characters, mood, and constraints automatically.</div>
-            <button type="submit">Generate Variations</button>
+        <h1>StoryboardFlow — Rough Board → Preview Clips</h1>
+        <p>Upload 4–8 storyboard frames (PNG/JPG). We’ll caption each panel, generate base + two alternatives, and drop you into the branching review.</p>
+        <ul>
+            <li>No API key needed — captions fall back deterministically.</li>
+            <li>Preview clips use ffmpeg Ken Burns; if ffmpeg is missing we fall back to stills.</li>
+            <li>Branch decisions propagate with lookahead regeneration window = 2.</li>
+        </ul>
+        <form method="post" action="/create" enctype="multipart/form-data">
+            <input type="file" name="files" accept="image/png,image/jpeg" multiple required />
+            <button type="submit">Create review job</button>
         </form>
     </section>
 </body>
