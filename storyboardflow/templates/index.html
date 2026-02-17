@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>StoryboardFlow · Variation Mode</title>
+    <style>
+        :root {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: #07090f;
+            color: #f4f4f4;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        .panel {
+            background: rgba(11, 15, 25, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 2rem;
+            max-width: 720px;
+            width: 100%;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+        }
+        h1 {
+            margin-top: 0;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+        }
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: #0d111c;
+            color: #fff;
+            padding: 1rem;
+            font-size: 1rem;
+        }
+        button {
+            margin-top: 1.5rem;
+            background: linear-gradient(135deg, #4b9cff, #9147ff);
+            border: none;
+            color: white;
+            padding: 0.9rem 1.5rem;
+            border-radius: 999px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        button:hover {
+            opacity: 0.85;
+        }
+        .hint {
+            opacity: 0.8;
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <section class="panel">
+        <h1>StoryboardFlow Variation Mode</h1>
+        <p>Paste a single-scene description and generate a structured interpretation, four creative image tiles, and a PDF contact sheet — all without API keys.</p>
+        <form method="post" action="/generate">
+            <textarea name="scene_text" placeholder="Example: A drenched detective waits beneath a flickering streetlamp as distant sirens cut through the midnight rain."></textarea>
+            <div class="hint">The engine infers characters, mood, and constraints automatically.</div>
+            <button type="submit">Generate Variations</button>
+        </form>
+    </section>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>StoryboardFlow · Results</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 2rem;
+            background: #05060a;
+            color: #f5f6fa;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        a { color: #7ed0ff; }
+        .layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 2rem;
+        }
+        .panel {
+            background: rgba(9, 12, 18, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+        }
+        dl {
+            margin: 0;
+        }
+        dt {
+            font-weight: 600;
+            margin-top: 1rem;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.2em;
+            opacity: 0.75;
+        }
+        dd {
+            margin: 0.2rem 0 0;
+            font-size: 0.95rem;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+        figure {
+            margin: 0;
+            background: #0b0f19;
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        figure img {
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        figcaption {
+            font-size: 0.85rem;
+            opacity: 0.85;
+        }
+        .actions {
+            margin: 1rem 0 2rem;
+        }
+        .actions a {
+            padding: 0.6rem 1rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.2);
+            text-decoration: none;
+            margin-right: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="actions">
+        <a href="/">← Generate another scene</a>
+        <a href="/{{ pdf_path }}" target="_blank">Download contact sheet PDF</a>
+    </div>
+    <section class="layout">
+        <article class="panel">
+            <h2>Scene Interpretation</h2>
+            <dl>
+                <dt>Title</dt>
+                <dd>{{ scene.title }}</dd>
+                <dt>Characters</dt>
+                <dd>{{ scene.characters | join(', ') }}</dd>
+                <dt>Location</dt>
+                <dd>{{ scene.location }}</dd>
+                <dt>Time of Day</dt>
+                <dd>{{ scene.time_of_day }}</dd>
+                <dt>Mood</dt>
+                <dd>{{ scene.mood }}</dd>
+                <dt>Lighting</dt>
+                <dd>{{ scene.lighting }}</dd>
+                <dt>Camera</dt>
+                <dd>{{ scene.camera }}</dd>
+                <dt>Style</dt>
+                <dd>{{ scene.style }}</dd>
+                <dt>Constraints</dt>
+                <dd>
+                    <ul>
+                        {% for constraint in scene.constraints %}
+                            <li>{{ constraint }}</li>
+                        {% endfor %}
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="panel">
+            <h2>Variation Grid ({{ job_id }})</h2>
+            <div class="grid">
+                {% for variation in variations %}
+                <figure>
+                    <img src="/{{ variation.image_path }}" alt="{{ variation.name }}">
+                    <figcaption>
+                        <strong>{{ variation.name }}</strong><br>
+                        {{ variation.prompt }}
+                    </figcaption>
+                </figure>
+                {% endfor %}
+            </div>
+        </article>
+    </section>
+</body>
+</html>
