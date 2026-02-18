@@ -1,6 +1,7 @@
 """FastAPI routes for storyboard branching workflow."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import List
 
@@ -15,6 +16,7 @@ from .pipeline import (
     create_job,
     ensure_state,
     export_pdf,
+    generate_video_async,
     regen_frame,
 )
 
@@ -58,6 +60,7 @@ async def review(request: Request, job_id: str):
         "frames": frames,
         "job_id": job_id,
         "pdf_path": str(pdf_path) if pdf_path.exists() else None,
+        "hq_enabled": bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
     }
     return templates.TemplateResponse("review.html", context)
 
@@ -83,6 +86,24 @@ async def regen(request: Request, job_id: str, frame_index: int = Form(...)):
         return JSONResponse({"status": "ok"})
     anchor = f"#frame-{frame_index + 1}"
     return RedirectResponse(url=f"/review/{job_id}{anchor}", status_code=303)
+
+
+@app.post("/generate_video/{job_id}")
+async def generate_video(job_id: str, frame_index: int = Form(...), variant: str = Form(...)):
+    try:
+        generate_video_async(job_id, frame_index, variant)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"status": "queued"})
+
+
+@app.get("/api/job/{job_id}")
+async def job_state(job_id: str):
+    state = ensure_state(job_id)
+    return {
+        "frames": [frame.model_dump() for frame in state.frames],
+        "constraints_version": state.constraints_version,
+    }
 
 
 @app.post("/export/{job_id}")

@@ -18,6 +18,7 @@ Visit http://127.0.0.1:8000, upload 4–8 JPG/PNG frames, and start branching.
 - **Preview clips**: ffmpeg applies a Ken Burns zoompan and text overlay for Base, Alt A, and Alt B. If ffmpeg is missing, StoryboardFlow falls back to the generated stills automatically.
 - **Branching with lookahead regen (W=2)**: selecting an alternative updates global constraints, re-renders the next two frames immediately (stills + clips), and marks later frames stale until you interact with them (lazy regen via `POST /regen`).
 - **Contact sheet export**: render the chosen variants into a PDF via ReportLab.
+- **Optional AI video generation**: preview clips always render instantly, and you can queue a high-quality OpenAI Sora clip asynchronously per variant. The UI surfaces HQ statuses (missing/queued/generating/ready) and swaps in the real clip automatically when it arrives.
 
 ## Example workflow
 1. Upload your rough storyboard images and submit.
@@ -32,3 +33,18 @@ Visit http://127.0.0.1:8000, upload 4–8 JPG/PNG frames, and start branching.
   export OPENAI_API_KEY=sk-...
   ```
 - **ffmpeg (for animated previews)** – install via Homebrew (`brew install ffmpeg`) or your package manager. Without it, StoryboardFlow automatically falls back to still images and disables hover playback.
+  
+## Optional: Gemini Veo HQ clips
+StoryboardFlow can now hand off HQ clip generation to Google’s Veo 3.1 via the Gemini API (defaulting to 3‑second 720p shots). Preview clips are still created instantly; Veo runs asynchronously, and the UI swaps to the HQ version when the job finishes.
+
+1. Install the Google client (already listed in `requirements.txt`):
+   ```bash
+   pip install google-genai
+   ```
+2. Export your Gemini key:
+   ```bash
+   export GEMINI_API_KEY=AIza...
+   ```
+3. Start `uvicorn` as usual and click “Generate HQ Clip” on any frame. The status badge shows `queued → generating → ready`, and the MP4 lands in `outputs/<job>/videos/`.
+
+If no Gemini key is present, HQ buttons stay hidden and the system falls back to ffmpeg previews automatically.

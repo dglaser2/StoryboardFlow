@@ -29,6 +29,11 @@
         video { background: #000; }
         .placeholder { opacity: 0.8; font-size: 0.85rem; }
         .caption-line { font-size: 0.85rem; opacity: 0.8; margin: 0.35rem 0; min-height: 2.4em; overflow: hidden; text-overflow: ellipsis; }
+        .hq-row { display: flex; align-items: center; justify-content: space-between; margin-top: 0.35rem; gap: 0.75rem; }
+        .hq-status { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.8; }
+        .hq-status.status-ready { color: #7ef29e; }
+        .hq-status.status-generating, .hq-status.status-queued { color: #ffd47e; }
+        .hq-status.status-failed { color: #ff8d8d; }
     </style>
 </head>
 <body>
@@ -38,6 +43,7 @@
             <div class="constraints">{{ state.global_constraints or "Constraints: none" }} · Version {{ state.constraints_version }}</div>
         </div>
         <div class="actions">
+            <a href="/" class="secondary" style="padding:0.6rem 1rem; border-radius:12px; border:1px solid rgba(255,255,255,0.2); text-decoration:none; color:#fff; margin-right:0.75rem;">Upload new storyboard</a>
             <form method="post" action="/export/{{ job_id }}">
                 <button class="secondary" type="submit">Export contact sheet PDF</button>
             </form>
@@ -49,23 +55,38 @@
     <div class="layout">
         <section class="grid">
             {% for frame in frames %}
-            {% set chosen_path = frame.base_clip_path %}
-            {% if frame.chosen == 'altA' %}
-                {% set chosen_path = frame.altA_clip_path %}
-            {% elif frame.chosen == 'altB' %}
-                {% set chosen_path = frame.altB_clip_path %}
+            {% set chosen_variant = frame.chosen %}
+            {% set clip_path = frame.base_clip_path %}
+            {% set video_status = frame['video_' ~ chosen_variant ~ '_status'] %}
+            {% set video_path = frame['video_' ~ chosen_variant ~ '_path'] %}
+            {% if chosen_variant == 'altA' %}
+                {% set clip_path = frame.altA_clip_path %}
+            {% elif chosen_variant == 'altB' %}
+                {% set clip_path = frame.altB_clip_path %}
             {% endif %}
-            {% set is_video = chosen_path.endswith('.mp4') %}
+            {% set chosen_path = clip_path %}
+            {% if video_status == 'ready' and video_path %}
+                {% set chosen_path = video_path %}
+            {% endif %}
+            {% set is_video = chosen_path and chosen_path.endswith('.mp4') %}
             <article class="frame-card {% if frame.is_stale %}stale{% endif %}" data-index="{{ frame.index }}" data-stale="{{ 'true' if frame.is_stale else 'false' }}">
                 <span class="badge {% if frame.is_stale %}stale{% endif %}">Frame {{ frame.index + 1 }}</span>
-                {% if is_video %}
-                    <video class="media" src="/{{ chosen_path }}" muted loop preload="metadata" poster="/{{ frame.upload_path }}"></video>
-                {% else %}
-                    <img class="media" src="/{{ chosen_path }}" alt="Frame {{ frame.index + 1 }}" />
-                {% endif %}
+                <div class="media-wrapper">
+                    {% if is_video %}
+                        <video class="media" src="/{{ chosen_path }}" muted loop preload="metadata" poster="/{{ frame.upload_path }}"></video>
+                    {% else %}
+                        <img class="media" src="/{{ chosen_path }}" alt="Frame {{ frame.index + 1 }}" />
+                    {% endif %}
+                </div>
                 <h3 id="frame-{{ frame.index + 1 }}">Frame {{ frame.index + 1 }}</h3>
                 <p class="caption-line">{{ frame.caption }}</p>
                 <p class="placeholder">Choice: {{ frame.chosen }}</p>
+                <div class="hq-row">
+                    <span class="hq-status status-{{ video_status }}">Preview {{ video_status }}</span>
+                    {% if hq_enabled and video_status != 'ready' %}
+                        <button type="button" class="secondary" onclick="requestVideo({{ frame.index }}, '{{ chosen_variant }}')">Generate AI Clip</button>
+                    {% endif %}
+                </div>
                 <div class="hidden" data-frame="{{ frame | tojson }}"></div>
             </article>
             {% endfor %}
@@ -92,10 +113,12 @@
     </div>
 
     <script>
-        const frames = {{ frames | tojson }};
+        let frames = {{ frames | tojson }};
         const jobId = '{{ job_id }}';
         const panel = document.getElementById('alt-panel');
         const closeAlt = document.getElementById('close-alt');
+        const hqEnabled = {{ 'true' if hq_enabled else 'false' }};
+        let pollHandle = null;
 
         function resetPanel() {
             panel.innerHTML = `<p class="placeholder">Select a frame to inspect Base / Lighting / Camera variations. Stale frames regenerate automatically before showing.</p>`;
@@ -126,11 +149,69 @@
             });
         });
 
+        if (hqEnabled) {
+            pollHandle = setInterval(pollJobState, 10000);
+        }
+
         function mediaElement(path, poster) {
-            if (path.endsWith('.mp4')) {
-                return `<video src="/${path}" muted loop preload="metadata" poster="/${poster}"></video>`;
+            const resolved = path || '';
+            if (resolved.endsWith('.mp4')) {
+                return `<video class="media" src="/${resolved}" muted loop preload="metadata" poster="/${poster}"></video>`;
             }
-            return `<img src="/${path}" />`;
+            const imagePath = resolved || poster;
+            return `<img class="media" src="/${imagePath}" />`;
+        }
+
+        async function pollJobState() {
+            try {
+                const res = await fetch(`/api/job/${jobId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                frames = data.frames;
+                frames.forEach((frame, idx) => updateFrameCard(idx));
+            } catch (err) {
+                console.error('Failed to poll job state', err);
+            }
+        }
+
+        function updateFrameCard(idx) {
+            const frame = frames[idx];
+            if (!frame) return;
+            const card = document.querySelector(`.frame-card[data-index="${idx}"]`);
+            if (!card) return;
+            const chosenVariant = frame.chosen;
+            const status = frame[`video_${chosenVariant}_status`] || 'missing';
+            const videoPath = frame[`video_${chosenVariant}_path`];
+            const clipPath = chosenVariant === 'altA'
+                ? frame.altA_clip_path
+                : chosenVariant === 'altB'
+                    ? frame.altB_clip_path
+                    : frame.base_clip_path;
+            const stillPath = chosenVariant === 'altA'
+                ? frame.still_altA_path
+                : chosenVariant === 'altB'
+                    ? frame.still_altB_path
+                    : frame.still_base_path;
+            const mediaPath = (status === 'ready' && videoPath) ? videoPath : clipPath;
+            const wrapper = card.querySelector('.media-wrapper');
+            if (wrapper) {
+                wrapper.innerHTML = mediaElement(mediaPath, stillPath);
+                const mediaEl = wrapper.querySelector('video');
+                if (mediaEl) {
+                    mediaEl.addEventListener('mouseenter', () => mediaEl.play());
+                    mediaEl.addEventListener('mouseleave', () => { mediaEl.pause(); mediaEl.currentTime = 0; });
+                }
+            }
+            const statusEl = card.querySelector('.hq-status');
+            if (statusEl) {
+                statusEl.textContent = `Preview ${status}`;
+                statusEl.className = `hq-status status-${status}`;
+            }
+            const button = card.querySelector('.hq-row button');
+            if (button) {
+                button.style.display = hqEnabled && status !== 'ready' ? 'inline-flex' : 'none';
+                button.onclick = () => requestVideo(idx, chosenVariant);
+            }
         }
 
         function showAlternatives(idx) {
@@ -138,11 +219,18 @@
             if (!frame) return;
             const captionAltA = frame.caption_altA || `${frame.caption} — dramatic lighting emphasis`;
             const captionAltB = frame.caption_altB || `${frame.caption} — tighter narrative camera`;
+            const baseMediaPath = (frame.video_base_status === 'ready' && frame.video_base_path) ? frame.video_base_path : frame.base_clip_path;
+            const altAMediaPath = (frame.video_altA_status === 'ready' && frame.video_altA_path) ? frame.video_altA_path : frame.altA_clip_path;
+            const altBMediaPath = (frame.video_altB_status === 'ready' && frame.video_altB_path) ? frame.video_altB_path : frame.altB_clip_path;
             panel.innerHTML = `
                 <div class="alt-card">
                     <h4>Base · prompt</h4>
-                    ${mediaElement(frame.base_clip_path, frame.still_base_path)}
+                    ${mediaElement(baseMediaPath, frame.still_base_path)}
                     <p>${frame.caption}</p>
+                    <div class="hq-row">
+                        <span class="hq-status status-${frame.video_base_status}">Preview ${frame.video_base_status}</span>
+                        ${hqEnabled && frame.video_base_status !== 'ready' ? `<button type="button" class="secondary" onclick="requestVideo(${idx}, 'base')">Generate AI Clip</button>` : ''}
+                    </div>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="base" />
@@ -151,8 +239,12 @@
                 </div>
                 <div class="alt-card">
                     <h4>Alt A · lighting shift</h4>
-                    ${mediaElement(frame.altA_clip_path, frame.still_altA_path)}
+                    ${mediaElement(altAMediaPath, frame.still_altA_path)}
                     <p>${captionAltA}</p>
+                    <div class="hq-row">
+                        <span class="hq-status status-${frame.video_altA_status}">Preview ${frame.video_altA_status}</span>
+                        ${hqEnabled && frame.video_altA_status !== 'ready' ? `<button type="button" class="secondary" onclick="requestVideo(${idx}, 'altA')">Generate AI Clip</button>` : ''}
+                    </div>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="altA" />
@@ -161,8 +253,12 @@
                 </div>
                 <div class="alt-card">
                     <h4>Alt B · camera shift</h4>
-                    ${mediaElement(frame.altB_clip_path, frame.still_altB_path)}
+                    ${mediaElement(altBMediaPath, frame.still_altB_path)}
                     <p>${captionAltB}</p>
+                    <div class="hq-row">
+                        <span class="hq-status status-${frame.video_altB_status}">Preview ${frame.video_altB_status}</span>
+                        ${hqEnabled && frame.video_altB_status !== 'ready' ? `<button type="button" class="secondary" onclick="requestVideo(${idx}, 'altB')">Generate AI Clip</button>` : ''}
+                    </div>
                     <form method="post" action="/choose/${jobId}">
                         <input type="hidden" name="frame_index" value="${idx}" />
                         <input type="hidden" name="choice" value="altB" />
@@ -181,6 +277,17 @@
                 video.addEventListener('mouseenter', () => video.play());
                 video.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
             });
+        }
+        async function requestVideo(frameIndex, variant) {
+            const fd = new FormData();
+            fd.append('frame_index', frameIndex);
+            fd.append('variant', variant);
+            try {
+                await fetch(`/generate_video/${jobId}`, { method: 'POST', body: fd });
+            } catch (err) {
+                console.error('Failed to queue video', err);
+            }
+            window.location.reload();
         }
     </script>
 </body>

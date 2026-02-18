@@ -24,6 +24,18 @@ class Frame(BaseModel):
     base_clip_path: str
     altA_clip_path: str
     altB_clip_path: str
+    video_base_path: Optional[str] = None
+    video_altA_path: Optional[str] = None
+    video_altB_path: Optional[str] = None
+    video_base_status: str = "missing"
+    video_altA_status: str = "missing"
+    video_altB_status: str = "missing"
+    video_base_job_id: Optional[str] = None
+    video_altA_job_id: Optional[str] = None
+    video_altB_job_id: Optional[str] = None
+    video_base_provider: Optional[str] = None
+    video_altA_provider: Optional[str] = None
+    video_altB_provider: Optional[str] = None
     chosen: str = "base"
     constraints_version: int = 0
     is_stale: bool = False
