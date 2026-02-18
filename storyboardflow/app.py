@@ -18,6 +18,7 @@ from .pipeline import (
     export_pdf,
     generate_video_async,
     regen_frame,
+    queue_ai_clip,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -104,6 +105,15 @@ async def job_state(job_id: str):
         "frames": [frame.model_dump() for frame in state.frames],
         "constraints_version": state.constraints_version,
     }
+
+
+@app.post("/generate_ai_clip/{job_id}")
+async def generate_ai_clip(job_id: str, frame_index: int = Form(...), variant_key: str = Form(...)):
+    try:
+        queue_ai_clip(job_id, frame_index, variant_key)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"status": "queued"})
 
 
 @app.post("/export/{job_id}")

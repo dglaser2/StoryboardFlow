@@ -22,7 +22,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-from .models import Frame, JobState, load_state, save_state
+from .models import Frame, JobState, Variant, load_state, save_state
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "outputs"
@@ -33,6 +33,7 @@ CLIPS_NAME = "clips"
 VIDEOS_NAME = "videos"
 LOOKAHEAD_WINDOW = 2
 FFMPEG_BIN = shutil.which("ffmpeg")
+AI_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 LIGHTING_OPTIONS = ["warm sunset", "neon noir", "high contrast", "soft studio"]
 CAMERA_OPTIONS = ["close-up", "over-the-shoulder", "low angle", "tracking"]
@@ -73,6 +74,24 @@ VARIANT_META = {
         "provider_attr": "video_altA_provider",
     },
     "altB": {
+        "still_attr": "still_altB_path",
+        "prompt_attr": "prompt_altB",
+        "clip_attr": "altB_clip_path",
+        "video_attr": "video_altB_path",
+        "status_attr": "video_altB_status",
+        "job_attr": "video_altB_job_id",
+        "provider_attr": "video_altB_provider",
+    },
+    "alt-lighting": {
+        "still_attr": "still_altA_path",
+        "prompt_attr": "prompt_altA",
+        "clip_attr": "altA_clip_path",
+        "video_attr": "video_altA_path",
+        "status_attr": "video_altA_status",
+        "job_attr": "video_altA_job_id",
+        "provider_attr": "video_altA_provider",
+    },
+    "alt-camera": {
         "still_attr": "still_altB_path",
         "prompt_attr": "prompt_altB",
         "clip_attr": "altB_clip_path",
@@ -200,6 +219,28 @@ def caption_frame(image_path: Path, frame_number: int) -> str:
         return f"Storyboard frame {frame_number}: (no vision key)."
 
 
+def derive_constraints_from_choice(choice: str, frame_caption: str, frame_index: int) -> Dict[str, Optional[str]]:
+    updates: Dict[str, Optional[str]] = {}
+    if choice == "altA":
+        lighting_options = ["warm", "noir", "neon"]
+        updates["lighting"] = lighting_options[frame_index % len(lighting_options)]
+    elif choice == "altB":
+        camera_options = ["tight_coverage", "closeups", "ots"]
+        updates["camera"] = camera_options[frame_index % len(camera_options)]
+    else:
+        # Base selection relaxes lighting/camera tweaks
+        updates["lighting"] = None
+        updates["camera"] = None
+    return updates
+
+
+def constraints_to_text(active_constraints: Dict[str, Optional[str]]) -> str:
+    parts = [f"{key}={value}" for key, value in active_constraints.items() if value]
+    if not parts:
+        return ""
+    return "Constraints: " + ", ".join(parts)
+
+
 def _veo_api_key() -> Optional[str]:
     return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
@@ -228,6 +269,34 @@ def _invalidate_videos(frame: Frame, variants: Sequence[str]) -> None:
         setattr(frame, fields["status_attr"], "missing")
         setattr(frame, fields["job_attr"], None)
         setattr(frame, fields.get("provider_attr"), None)
+
+
+def _next_variant_key(frame: Frame, base_key: str) -> str:
+    counter = 1
+    while f"{base_key}-{counter}" in frame.variants:
+        counter += 1
+    return f"{base_key}-{counter}"
+
+
+def _attach_canonical_variants(frame: Frame, stills: Dict[str, Path], clip_paths: Dict[str, str]) -> None:
+    frame.variants["base"] = Variant(
+        key="base",
+        kind="base",
+        still_path=str(relative_to_outputs(stills["base"])),
+        preview_clip_path=clip_paths["base"],
+    )
+    frame.variants["alt-lighting"] = Variant(
+        key="alt-lighting",
+        kind="alt-lighting",
+        still_path=str(relative_to_outputs(stills["altA"])),
+        preview_clip_path=clip_paths["altA"],
+    )
+    frame.variants["alt-camera"] = Variant(
+        key="alt-camera",
+        kind="alt-camera",
+        still_path=str(relative_to_outputs(stills["altB"])),
+        preview_clip_path=clip_paths["altB"],
+    )
 
 
 def enhance_frame(in_path: Path, out_path: Path, target_width: int = 1280) -> Path:
@@ -348,6 +417,31 @@ def _apply_camera_variant(image: Image.Image, frame_number: int) -> Image.Image:
     return ImageEnhance.Sharpness(cinematic).enhance(1.25)
 
 
+def generate_alt_camera_variant(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    zoom = 0.5
+    crop_w = int(width * zoom)
+    crop_h = int(height * zoom)
+    x_offset = (width - crop_w) // 2
+    y_offset = (height - crop_h) // 2
+    crop = image.crop((x_offset, y_offset, x_offset + crop_w, y_offset + crop_h))
+    zoomed = crop.resize((width, height), Image.Resampling.LANCZOS)
+    vignette = Image.new("L", zoomed.size, 0)
+    draw = ImageDraw.Draw(vignette)
+    draw.rectangle([(0, int(height * 0.25)), (width, int(height * 0.75))], fill=200)
+    bars = Image.new("RGB", zoomed.size, color=(10, 10, 12))
+    cinematic = Image.composite(zoomed, bars, vignette)
+    return ImageEnhance.Sharpness(cinematic).enhance(1.35)
+
+
+def generate_alt_lighting_variant(image: Image.Image) -> Image.Image:
+    image = ImageEnhance.Color(image).enhance(1.5)
+    image = ImageEnhance.Contrast(image).enhance(1.3)
+    overlay = Image.new("RGB", image.size, (255, 120, 60))
+    blended = Image.blend(image, overlay, 0.15)
+    return ImageEnhance.Brightness(blended).enhance(0.95)
+
+
 def render_preview_clip(still_path: Path, out_mp4: Path, overlay_text: str) -> bool:
     if not FFMPEG_BIN:
         return False
@@ -394,6 +488,12 @@ def _videos_dir(job_id: str) -> Path:
     return path
 
 
+def _ai_videos_dir(job_id: str) -> Path:
+    path = get_job_dir(job_id) / "ai_videos"
+    path.mkdir(exist_ok=True)
+    return path
+
+
 def ensure_state(job_id: str) -> JobState:
     path = get_state_path(job_id)
     state = load_state(path)
@@ -422,7 +522,13 @@ def create_job(files: Sequence[Tuple[str, bytes]]) -> UploadResult:
     videos_dir.mkdir(exist_ok=True)
 
     frames: List[Frame] = []
-    constraints = ""
+    active_constraints: Dict[str, Optional[str]] = {
+        "lighting": None,
+        "camera": None,
+        "mood": None,
+        "style": None,
+    }
+    constraints_text = constraints_to_text(active_constraints)
 
     uploads: List[Tuple[int, Path]] = []
     for idx, (filename, data) in enumerate(files):
@@ -447,10 +553,31 @@ def create_job(files: Sequence[Tuple[str, bytes]]) -> UploadResult:
             caption,
             lighting_caption,
             camera_caption,
-            constraints,
+            constraints_text,
         )
-        prompts = build_prompts(caption, constraints)
+        prompts = build_prompts(caption, constraints_text)
         clip_paths = _render_clips_from_stills(frame_number, still_paths, clips_dir)
+
+        variants = {
+            "base": Variant(
+                key="base",
+                kind="base",
+                still_path=str(relative_to_outputs(still_paths["base"])),
+                preview_clip_path=clip_paths["base"],
+            ),
+            "alt-lighting": Variant(
+                key="alt-lighting",
+                kind="alt-lighting",
+                still_path=str(relative_to_outputs(still_paths["altA"])),
+                preview_clip_path=clip_paths["altA"],
+            ),
+            "alt-camera": Variant(
+                key="alt-camera",
+                kind="alt-camera",
+                still_path=str(relative_to_outputs(still_paths["altB"])),
+                preview_clip_path=clip_paths["altB"],
+            ),
+        }
 
         frame = Frame(
             index=idx,
@@ -469,13 +596,16 @@ def create_job(files: Sequence[Tuple[str, bytes]]) -> UploadResult:
             altA_clip_path=clip_paths["altA"],
             altB_clip_path=clip_paths["altB"],
             constraints_version=0,
+            variants=variants,
+            chosen_variant_key="base",
         )
         frames.append(frame)
 
     state = JobState(
         job_id=job_id,
         num_frames=len(frames),
-        global_constraints=constraints,
+        global_constraints=constraints_text,
+        active_constraints=active_constraints,
         frames=frames,
     )
     save_state(state, get_state_path(job_id))
@@ -507,13 +637,14 @@ def _safe_caption_frame(frame_number: int, path: Path) -> str:
     return _sanitize_caption(caption)
 
 
-def build_prompts(caption: str, constraints: str) -> Tuple[str, str, str]:
-    base = _clamp(f"{caption}. {constraints} cinematic storyboard still")
+def build_prompts(caption: str, constraints_text: str) -> Tuple[str, str, str]:
+    suffix = f" {constraints_text}" if constraints_text else ""
+    base = _clamp(f"{caption}. cinematic storyboard still{suffix}")
     idx = sum(ord(c) for c in caption)
     lighting = LIGHTING_OPTIONS[idx % len(LIGHTING_OPTIONS)]
     camera = CAMERA_OPTIONS[idx % len(CAMERA_OPTIONS)]
-    altA = _clamp(f"{caption}. {constraints} with {lighting} lighting cinematic still")
-    altB = _clamp(f"{caption}. {constraints} shot as {camera} cinematic still")
+    altA = _clamp(f"{caption}. cinematic storyboard still with {lighting} lighting{suffix}")
+    altB = _clamp(f"{caption}. cinematic storyboard still shot as {camera}{suffix}")
     return base, altA, altB
 
 
@@ -538,6 +669,93 @@ def generate_video_async(job_id: str, frame_index: int, variant: str) -> None:
         daemon=True,
     )
     thread.start()
+
+
+def queue_ai_clip(job_id: str, frame_index: int, variant_key: str) -> None:
+    if not _veo_enabled():
+        return
+    state = ensure_state(job_id)
+    frame = state.frames[frame_index]
+    variant = frame.variants.get(variant_key)
+    if not variant:
+        raise ValueError(f"Variant {variant_key} not found on frame {frame_index}")
+    if variant.ai_video_status in {"queued", "generating", "ready"}:
+        return
+    variant.ai_video_status = "queued"
+    save_state(state, get_state_path(job_id))
+    print(f"[ai] queued clip job {job_id} frame {frame_index} variant {variant_key}")
+    AI_EXECUTOR.submit(_generate_ai_clip, job_id, frame_index, variant_key)
+
+
+def _generate_ai_clip(job_id: str, frame_index: int, variant_key: str) -> None:
+    try:
+        state = ensure_state(job_id)
+        frame = state.frames[frame_index]
+        variant = frame.variants.get(variant_key)
+        if not variant:
+            raise ValueError("Variant missing during generation")
+        variant.ai_video_status = "generating"
+        save_state(state, get_state_path(job_id))
+
+        still_path = BASE_DIR / variant.still_path
+        if not still_path.exists():
+            raise FileNotFoundError(f"Still missing for variant {variant_key}")
+
+        prompt = _prompt_for_variant(frame, variant_key)
+        client = _veo_client()
+        mime_type, _ = mimetypes.guess_type(str(still_path))
+        image_ref = _veo_image_part(still_path, mime_type or "image/png")
+        operation = client.models.generate_videos(
+            model=VEO_MODEL,
+            prompt=prompt,
+            image=image_ref,
+            config=_veo_config(),
+        )
+        op_name = getattr(operation, "name", None)
+        poll_operation = operation
+        start_time = time.monotonic()
+        while not getattr(poll_operation, "done", False):
+            if time.monotonic() - start_time > VEO_MAX_WAIT_SECONDS:
+                raise TimeoutError("Timed out waiting for AI clip")
+            time.sleep(VEO_POLL_INTERVAL)
+            poll_operation = client.operations.get(poll_operation)
+        response_payload = getattr(poll_operation, "response", None)
+        if response_payload is None:
+            raise RuntimeError("Veo operation completed without response")
+        generated_videos = getattr(response_payload, "generated_videos", [])
+        if not generated_videos:
+            raise RuntimeError("Veo returned no videos")
+        video_obj = generated_videos[0].video
+        videos_dir = _ai_videos_dir(job_id)
+        out_path = videos_dir / f"frame_{frame.index+1:02d}_{variant_key}.mp4"
+        _download_veo_video(client, video_obj, out_path)
+
+        state = ensure_state(job_id)
+        frame = state.frames[frame_index]
+        variant = frame.variants.get(variant_key)
+        if variant:
+            variant.ai_video_path = str(relative_to_outputs(out_path))
+            variant.ai_video_status = "ready"
+            variant.ai_job_id = op_name
+            save_state(state, get_state_path(job_id))
+            print(f"[ai] job {job_id} frame {frame_index} {variant_key} ready")
+    except Exception as exc:
+        state = ensure_state(job_id)
+        frame = state.frames[frame_index]
+        variant = frame.variants.get(variant_key)
+        if variant:
+            variant.ai_video_status = "failed"
+            variant.ai_job_id = None
+            save_state(state, get_state_path(job_id))
+        print(f"[ai] job {job_id} frame {frame_index} {variant_key} failed: {exc}")
+
+
+def _prompt_for_variant(frame: Frame, variant_key: str) -> str:
+    if variant_key.startswith("alt-camera"):
+        return _video_prompt(frame.prompt_altB)
+    if variant_key.startswith("alt-lighting"):
+        return _video_prompt(frame.prompt_altA)
+    return _video_prompt(frame.prompt_base)
 
 
 def generate_video_worker(job_id: str, frame_index: int, variant: str) -> None:
@@ -624,51 +842,59 @@ def _generate_veo_video(job_id: str, frame_index: int, variant: str) -> None:
 
 
 def choose_variant(job_id: str, frame_index: int, choice: str) -> JobState:
-    if choice not in {"base", "altA", "altB"}:
-        raise ValueError("Invalid choice")
     state = ensure_state(job_id)
     if frame_index < 0 or frame_index >= state.num_frames:
         raise ValueError("Frame index out of range")
-
+    variant_key, legacy_choice = _normalize_choice(choice)
     frame = state.frames[frame_index]
-    frame.chosen = choice
-    state.constraints_version += 1
-    state.global_constraints = describe_constraints(frame_index, choice)
+    frame.chosen = legacy_choice
+    frame.chosen_variant_key = variant_key
 
     job_dir = get_job_dir(job_id)
-    state.frames[frame_index].constraints_version = state.constraints_version
-
-    for idx in range(frame_index + 1, state.num_frames):
-        fr = state.frames[idx]
-        prompts = build_prompts(fr.caption, state.global_constraints)
-        fr.prompt_base, fr.prompt_altA, fr.prompt_altB = prompts
-        if idx <= frame_index + LOOKAHEAD_WINDOW:
+    if variant_key in {"alt-lighting", "alt-camera", "base"}:
+        state.global_mode = None
+        state.global_mode_start_index = None
+        if variant_key != "base":
+            state.global_mode = variant_key
+            state.global_mode_start_index = frame_index
+        for idx in range(frame_index, state.num_frames):
+            fr = state.frames[idx]
+            fr.chosen = legacy_choice if idx == frame_index else ("altA" if variant_key == "alt-lighting" else "altB" if variant_key == "alt-camera" else "base")
+            fr.chosen_variant_key = variant_key
+        end = min(state.num_frames, frame_index + LOOKAHEAD_WINDOW + 1)
+        for idx in range(frame_index, end):
             _regenerate_frame_assets(state, idx, job_dir)
-        else:
-            fr.constraints_version = state.constraints_version - 1
+        queue_ai_clip(job_id, frame_index, variant_key)
+    else:
+        # Derived or other variants: apply only to this frame
+        frame.chosen_variant_key = variant_key
+        queue_ai_clip(job_id, frame_index, variant_key)
 
     state.branch_events.append(
         {
             "frame_index": frame_index,
-            "chosen": choice,
+            "choice": choice,
+            "variant_key": variant_key,
             "constraints_version": state.constraints_version,
             "global_constraints": state.global_constraints,
             "timestamp": datetime.utcnow().isoformat(),
         }
     )
-
     save_state(state, get_state_path(job_id))
-    _queue_lookahead_videos(job_id, state, frame_index)
     return state
 
 
-def describe_constraints(frame_index: int, choice: str) -> str:
-    frame_num = frame_index + 1
-    if choice == "altA":
-        return f"Constraints: lock lighting cues from frame {frame_num} onward"
-    if choice == "altB":
-        return f"Constraints: adopt tighter coverage from frame {frame_num} onward"
-    return f"Constraints: preserve baseline look after frame {frame_num}"
+def _normalize_choice(choice: str) -> Tuple[str, str]:
+    mapping = {
+        "base": ("base", "base"),
+        "altA": ("alt-lighting", "altA"),
+        "altB": ("alt-camera", "altB"),
+        "alt-lighting": ("alt-lighting", "altA"),
+        "alt-camera": ("alt-camera", "altB"),
+    }
+    if choice in mapping:
+        return mapping[choice]
+    return (choice, choice)
 
 
 def regen_frame(job_id: str, frame_index: int) -> JobState:
@@ -679,8 +905,8 @@ def regen_frame(job_id: str, frame_index: int) -> JobState:
     if frame.constraints_version >= state.constraints_version:
         return state
     _regenerate_frame_assets(state, frame_index, get_job_dir(job_id))
+    frame.constraints_version = state.constraints_version
     save_state(state, get_state_path(job_id))
-    _queue_video_if_needed(job_id, frame_index, "base", state)
     return state
 
 
@@ -771,6 +997,8 @@ def _regenerate_frame_assets(state: JobState, frame_index: int, job_dir: Path) -
     frame.altB_clip_path = clip_paths["altB"]
     frame.constraints_version = state.constraints_version
     _invalidate_videos(frame, ("base", "altA", "altB"))
+    _attach_canonical_variants(frame, stills, clip_paths)
+    generate_derived_variants(frame, job_dir)
 
 
 def _ensure_enhanced_path(frame: Frame, job_dir: Path) -> Path:
@@ -790,6 +1018,95 @@ def relative_to_outputs(path: Path) -> Path:
 
 def _clamp(text: str, limit: int = 220) -> str:
     return textwrap.shorten(text, width=limit, placeholder="...")
+
+
+def generate_derived_variants(frame: Frame, job_dir: Path) -> None:
+    variant_key = frame.chosen_variant_key
+    chosen = frame.variants.get(variant_key)
+    if not chosen:
+        return
+    if variant_key.startswith("alt-camera"):
+        _create_camera_and_lighting_derivatives(frame, chosen, job_dir)
+    elif variant_key.startswith("alt-lighting"):
+        _create_lighting_and_camera_derivatives(frame, chosen, job_dir)
+
+
+def _create_camera_and_lighting_derivatives(frame: Frame, chosen: Variant, job_dir: Path) -> None:
+    if any(key.startswith("alt-camera-") for key in frame.variants):
+        return
+    source = BASE_DIR / chosen.still_path
+    if not source.exists():
+        return
+    image = Image.open(source)
+    stills_dir = job_dir / STILLS_NAME
+    clips_dir = job_dir / CLIPS_NAME
+
+    cam_key = _next_variant_key(frame, "alt-camera")
+    cam_img = generate_alt_camera_variant(image.copy())
+    cam_still = stills_dir / f"frame_{frame.index+1:02d}_{cam_key}.png"
+    cam_img.save(cam_still)
+    cam_clip = clips_dir / f"frame_{frame.index+1:02d}_{cam_key}.mp4"
+    render_preview_clip(cam_still, cam_clip, cam_key)
+    frame.variants[cam_key] = Variant(
+        key=cam_key,
+        kind="derived",
+        parent_key=chosen.key,
+        still_path=str(relative_to_outputs(cam_still)),
+        preview_clip_path=str(relative_to_outputs(cam_clip)),
+    )
+
+    light_key = _next_variant_key(frame, "alt-lighting")
+    light_img = generate_alt_lighting_variant(image.copy())
+    light_still = stills_dir / f"frame_{frame.index+1:02d}_{light_key}.png"
+    light_img.save(light_still)
+    light_clip = clips_dir / f"frame_{frame.index+1:02d}_{light_key}.mp4"
+    render_preview_clip(light_still, light_clip, light_key)
+    frame.variants[light_key] = Variant(
+        key=light_key,
+        kind="derived",
+        parent_key=chosen.key,
+        still_path=str(relative_to_outputs(light_still)),
+        preview_clip_path=str(relative_to_outputs(light_clip)),
+    )
+
+
+def _create_lighting_and_camera_derivatives(frame: Frame, chosen: Variant, job_dir: Path) -> None:
+    if any(key.startswith("alt-lighting-") for key in frame.variants):
+        return
+    source = BASE_DIR / chosen.still_path
+    if not source.exists():
+        return
+    image = Image.open(source)
+    stills_dir = job_dir / STILLS_NAME
+    clips_dir = job_dir / CLIPS_NAME
+
+    light_key = _next_variant_key(frame, "alt-lighting")
+    light_img = generate_alt_lighting_variant(image.copy())
+    light_still = stills_dir / f"frame_{frame.index+1:02d}_{light_key}.png"
+    light_img.save(light_still)
+    light_clip = clips_dir / f"frame_{frame.index+1:02d}_{light_key}.mp4"
+    render_preview_clip(light_still, light_clip, light_key)
+    frame.variants[light_key] = Variant(
+        key=light_key,
+        kind="derived",
+        parent_key=chosen.key,
+        still_path=str(relative_to_outputs(light_still)),
+        preview_clip_path=str(relative_to_outputs(light_clip)),
+    )
+
+    cam_key = _next_variant_key(frame, "alt-camera")
+    cam_img = generate_alt_camera_variant(image.copy())
+    cam_still = stills_dir / f"frame_{frame.index+1:02d}_{cam_key}.png"
+    cam_img.save(cam_still)
+    cam_clip = clips_dir / f"frame_{frame.index+1:02d}_{cam_key}.mp4"
+    render_preview_clip(cam_still, cam_clip, cam_key)
+    frame.variants[cam_key] = Variant(
+        key=cam_key,
+        kind="derived",
+        parent_key=chosen.key,
+        still_path=str(relative_to_outputs(cam_still)),
+        preview_clip_path=str(relative_to_outputs(cam_clip)),
+    )
 
 
 def _veo_config():
@@ -844,29 +1161,6 @@ def _safe_overlay_text(text: str) -> str:
 def _sanitize_caption(text: str) -> str:
     clean = text.replace('\n', ' ').replace('—', '-').replace('–', '-').strip()
     return clean
-
-
-def _queue_lookahead_videos(job_id: str, state: JobState, frame_index: int) -> None:
-    if not _veo_enabled():
-        return
-    for idx in range(frame_index + 1, min(state.num_frames, frame_index + LOOKAHEAD_WINDOW + 1)):
-        _queue_video_if_needed(job_id, idx, "base", state)
-
-
-def _queue_video_if_needed(job_id: str, frame_index: int, variant: str, state: Optional[JobState] = None) -> None:
-    if not _veo_enabled():
-        return
-    if state is None:
-        try:
-            state = ensure_state(job_id)
-        except FileNotFoundError:
-            return
-    frame = state.frames[frame_index]
-    fields = _variant_fields(variant)
-    status = getattr(frame, fields["status_attr"], "missing")
-    if status in {"ready", "queued", "generating"}:
-        return
-    generate_video_async(job_id, frame_index, variant)
 
 
 OUTPUT_DIR.mkdir(exist_ok=True)

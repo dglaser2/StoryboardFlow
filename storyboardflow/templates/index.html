@@ -58,17 +58,25 @@
 </head>
 <body>
     <section class="panel">
-        <h1>StoryboardFlow — Rough Board → Preview Clips</h1>
-        <p>Upload 4–8 storyboard frames (PNG/JPG). We’ll caption each panel, generate base + two alternatives, and drop you into the branching review.</p>
-        <ul>
-            <li>No API key needed — captions fall back deterministically.</li>
-            <li>Preview clips use ffmpeg Ken Burns; if ffmpeg is missing we fall back to stills.</li>
-            <li>Branch decisions propagate with lookahead regeneration window = 2.</li>
-        </ul>
+        <h1>StoryboardFlow — Upload • Branch • Remix</h1>
+        <p>Drop in 4–8 PNG/JPG storyboard frames. We auto-caption them, spin up variants of your frames, and let you experiment with moods and styles. If you select a variant, your choice instantly ripples downstream to subsequent frames.</p>
         <form method="post" action="/create" enctype="multipart/form-data">
+            <label style="display:block; font-size:0.9rem; opacity:0.8; margin-bottom:0.35rem;">Choose 4–8 PNG/JPG files</label>
             <input type="file" name="files" accept="image/png,image/jpeg" multiple required />
+            <div style="font-size:0.85rem; opacity:0.75; margin-top:0.4rem;" id="file-count">No files selected</div>
             <button type="submit">Create review job</button>
         </form>
     </section>
+    <script>
+        const fileInput = document.querySelector('input[type="file"]');
+        const fileCount = document.getElementById('file-count');
+        fileInput.addEventListener('change', () => {
+            if (!fileInput.files.length) {
+                fileCount.textContent = 'No files selected';
+                return;
+            }
+            fileCount.textContent = `${fileInput.files.length} file(s) selected`;
+        });
+    </script>
 </body>
 </html>
